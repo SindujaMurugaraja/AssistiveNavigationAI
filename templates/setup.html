@@ -1,0 +1,28 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QR Setup · Assistive Navigation AI</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f3f5fb;color:#182033;margin:0}.wrap{max-width:650px;margin:30px auto;padding:16px}.card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 5px 22px #18203312;margin:14px 0}
+input{width:100%;padding:13px;border:1px solid #cbd2e5;border-radius:10px;font-size:15px}button{padding:12px 16px;background:#4059d8;color:#fff;border:0;border-radius:10px;font-weight:bold;margin-top:10px}
+img{width:240px;max-width:100%;display:block;margin:15px auto}.muted{color:#64708a;line-height:1.5;font-size:14px}#msg{margin-top:10px;color:#263b9c}
+</style></head><body><div class="wrap">
+<div class="card"><h2>Assistive Navigation AI · QR setup</h2>
+<p class="muted">1. Start the Flask app. 2. Start a Cloudflare Quick Tunnel in a second terminal. 3. Paste its HTTPS URL below to create the QR code.</p>
+<label for="url">Cloudflare HTTPS URL</label><input id="url" placeholder="https://example.trycloudflare.com" value="{{ public_url }}">
+<button onclick="save()">Save link & create QR</button><div id="msg"></div>
+<img id="qr" alt="QR code will appear here" style="display:none">
+<p class="muted">Scan this QR using the phone camera or QR scanner. The phone and laptop need internet access. The phone browser should show the HTTPS address.</p>
+</div>
+<div class="card"><b>Important</b><p class="muted">Do not share the tunnel link publicly. Stop the tunnel when your demo is finished.</p></div>
+</div><script>
+async function save(){
+ const url=document.getElementById('url').value.trim();
+ const msg=document.getElementById('msg'); msg.textContent='Saving...';
+ try{
+  const r=await fetch('/set-public-url',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+  const d=await r.json(); if(!r.ok) throw new Error(d.error||'Could not save URL');
+  document.getElementById('qr').src='/qr.png?t='+Date.now();
+  document.getElementById('qr').style.display='block';
+  msg.textContent='QR ready. Scan it with your phone.';
+ }catch(e){msg.textContent=e.message;}
+}
+</script></body></html>

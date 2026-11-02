@@ -1,0 +1,641 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assistive Navigation AI</title>
+
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;
+ background:#f3f5fb;
+ color:#182033;
+ font-family:Arial,sans-serif
+}
+.wrap{max-width:900px;margin:auto;padding:18px}
+.card{
+ background:white;
+ border-radius:18px;
+ padding:18px;
+ margin:14px 0;
+ box-shadow:0 5px 22px #18203312
+}
+h1{font-size:25px;margin:4px 0 6px}
+h3{margin-top:5px}
+.muted{color:#64708a;font-size:14px;line-height:1.5}
+video{
+ width:100%;
+ max-height:55vh;
+ background:#101522;
+ border-radius:14px;
+ object-fit:contain
+}
+button,select{
+ border:0;
+ border-radius:12px;
+ padding:13px 17px;
+ font-weight:bold;
+ font-size:15px;
+ cursor:pointer;
+ margin:5px 5px 5px 0
+}
+.primary{background:#4059d8;color:white}
+.secondary{background:#e9edff;color:#253b9c}
+.stop{background:#f1f2f5;color:#30394c}
+#status{
+ padding:11px;
+ border-radius:10px;
+ background:#f1f4ff;
+ color:#263b9c;
+ margin:10px 0;
+ font-size:14px
+}
+#objects{display:flex;flex-wrap:wrap;gap:8px}
+.tag{
+ background:#edf1ff;
+ padding:8px 11px;
+ border-radius:20px;
+ font-size:13px
+}
+.warning{
+ border-left:4px solid #d69b26;
+ background:#fff9e9
+}
+#result{
+ padding:13px;
+ background:#f3f5ff;
+ border-radius:12px;
+ margin-top:12px;
+ line-height:1.6
+}
+#motionBox,#proximityBox{
+ padding:12px;
+ background:#f7f8fc;
+ border-radius:12px;
+ margin-top:10px;
+ font-size:14px;
+ line-height:1.5
+}
+</style>
+</head>
+
+<body>
+<main class="wrap">
+
+<div class="card">
+<h1>Assistive Navigation AI</h1>
+<div class="muted">
+Experimental computer-vision accessibility prototype
+</div>
+</div>
+
+<div class="card">
+<h3>Phone Camera</h3>
+
+<video id="camera" autoplay playsinline muted></video>
+
+<button class="primary" id="start">
+Start Camera & AI
+</button>
+
+<button class="stop" id="stop">Stop</button>
+
+<div id="status">Waiting for camera permission.</div>
+</div>
+
+<div class="card">
+<h3>Voice Assistant</h3>
+
+<select id="language">
+<option value="en-IN">English</option>
+<option value="ta-IN">Tamil</option>
+</select>
+
+<br>
+
+<button class="primary" id="listen">
+🎙️ Find an Object
+</button>
+
+<button class="secondary" id="voiceToggle">
+Voice: ON
+</button>
+
+<p class="muted">
+Try saying:
+Find my bottle, Where is my chair,
+Find my backpack, Find my phone.
+</p>
+
+<div id="result">
+Start camera and speak an object name.
+</div>
+</div>
+
+<div class="card">
+<h3>Motion Detection</h3>
+<div id="motionBox">
+Waiting for movement information...
+</div>
+</div>
+
+<div class="card">
+<h3>Visual Proximity Alert</h3>
+<div id="proximityBox">
+Waiting for object information...
+</div>
+</div>
+
+<div class="card">
+<h3>Latest Detection</h3>
+<div id="count"><b>0</b> objects detected</div>
+<div id="objects" style="margin-top:12px">
+No detections yet.
+</div>
+</div>
+
+<div class="card warning">
+<b>Safety Notice</b>
+<p class="muted">
+This is an experimental demo.
+Directions are based on image position.
+Visual size is not actual distance measurement.
+Motion detection may be incorrect if the camera moves.
+It does not reliably detect walls or all obstacles.
+Do not use this system for real-world navigation or as
+a replacement for a cane, guide dog, or human assistance.
+Test only while stationary in a safe place.
+</p>
+</div>
+
+</main>
+
+<script>
+const video=document.getElementById("camera");
+const statusBox=document.getElementById("status");
+const countBox=document.getElementById("count");
+const objectsBox=document.getElementById("objects");
+const resultBox=document.getElementById("result");
+const motionBox=document.getElementById("motionBox");
+const proximityBox=document.getElementById("proximityBox");
+
+let stream=null;
+let timer=null;
+let busy=false;
+let voiceOn=true;
+let wantedObject=null;
+let previousObjects=[];
+let lastSpeech="";
+let lastSpeechTime=0;
+let lastMissingAlert=0;
+let lastProximityAlert=0;
+let lastMotionAlert=0;
+
+const aliases={
+ bottle:["bottle","water bottle"],
+ chair:["chair"],
+ backpack:["backpack","bag","school bag"],
+ handbag:["handbag","purse"],
+ book:["book","notebook"],
+ "cell phone":["phone","mobile","cell phone"],
+ laptop:["laptop","computer"],
+ cup:["cup","mug"],
+ person:["person","people"],
+ "dining table":["table","desk"],
+ umbrella:["umbrella"],
+ remote:["remote","remote control"],
+ tv:["tv","television"],
+ couch:["sofa","couch"],
+ bed:["bed"],
+ "potted plant":["plant"],
+ "sports ball":["ball"]
+};
+
+function identifyObject(sentence){
+ const text=sentence.toLowerCase();
+
+ for(const [object,words] of Object.entries(aliases)){
+  if(words.some(word=>text.includes(word))){
+   return object;
+  }
+ }
+
+ return null;
+}
+
+// Voice output with cooldown
+function speak(message,type="general",cooldown=6500){
+ if(!voiceOn || !("speechSynthesis" in window)) return;
+
+ const now=Date.now();
+
+ if(message===lastSpeech && now-lastSpeechTime<cooldown){
+  return;
+ }
+
+ lastSpeech=message;
+ lastSpeechTime=now;
+
+ window.speechSynthesis.cancel();
+
+ const speech=new SpeechSynthesisUtterance(message);
+ speech.lang=document.getElementById("language").value;
+ speech.rate=0.9;
+
+ window.speechSynthesis.speak(speech);
+}
+
+// Direction based on object position
+function getDirection(item){
+ const box=item.box;
+ const width=item.frame_width || 640;
+
+ const centre=(box[0]+box[2])/2;
+ const position=centre/width;
+
+ if(position<0.36) return "left";
+ if(position>0.64) return "right";
+
+ return "centre";
+}
+
+// Rough visual size estimate
+function getVisualSize(item){
+ const box=item.box;
+ const width=item.frame_width || 640;
+ const height=item.frame_height || 480;
+
+ const area=
+ ((box[2]-box[0])*(box[3]-box[1]))/
+ (width*height);
+
+ if(area>0.22) return "large";
+ if(area>0.07) return "medium";
+
+ return "small";
+}
+
+// Search requested object
+function searchObject(items){
+ if(!wantedObject) return;
+
+ const matches=items.filter(item=>
+  item.name.toLowerCase()===wantedObject.toLowerCase()
+ );
+
+ if(matches.length===0){
+  resultBox.textContent=
+   "Cannot see "+wantedObject+
+   " in the current camera view.";
+
+  const now=Date.now();
+
+  if(now-lastMissingAlert>8000){
+   speak(
+    "I cannot see "+wantedObject+
+    " in the current camera view.",
+    "missing",
+    8000
+   );
+
+   lastMissingAlert=now;
+  }
+
+  return;
+ }
+
+ matches.sort((a,b)=>b.confidence-a.confidence);
+
+ const item=matches[0];
+ const direction=getDirection(item);
+ const size=getVisualSize(item);
+
+ let message=
+  wantedObject+" detected towards your "+
+  direction+". It appears "+size+
+  " in the image.";
+
+ resultBox.textContent=
+  message+" This is an approximate image-based result.";
+
+ speak(message,"target",6500);
+}
+
+// Motion detection
+function detectMotion(items){
+ let movement=null;
+
+ for(const item of items){
+
+  const old=previousObjects.find(
+   previous=>previous.name===item.name
+  );
+
+  if(!old) continue;
+
+  const oldCentre=(old.box[0]+old.box[2])/2;
+  const newCentre=(item.box[0]+item.box[2])/2;
+
+  const difference=newCentre-oldCentre;
+
+  if(Math.abs(difference)>35){
+   movement={
+    name:item.name,
+    direction:difference>0?"right":"left"
+   };
+
+   break;
+  }
+ }
+
+ if(movement){
+  const message=
+   movement.name+" appears to move "+
+   movement.direction+" in the camera image.";
+
+  motionBox.textContent=message;
+
+  const now=Date.now();
+
+  if(now-lastMotionAlert>7000){
+   speak(message,"motion",7000);
+   lastMotionAlert=now;
+  }
+ }else{
+  motionBox.textContent=
+   "No clear object movement detected.";
+ }
+
+ previousObjects=items.map(item=>({
+  name:item.name,
+  box:item.box
+ }));
+}
+
+// Visual proximity indication
+// This is NOT actual distance measurement.
+function detectVisualProximity(items){
+
+ const largeItems=items.filter(item=>
+  getVisualSize(item)==="large"
+ );
+
+ if(largeItems.length===0){
+  proximityBox.textContent=
+   "No detected object currently appears very large in the image.";
+  return;
+ }
+
+ const names=largeItems.map(item=>item.name);
+
+ proximityBox.textContent=
+  "Visual alert: "+names.join(", ")+
+  " appear large in the camera image. Actual distance is unknown.";
+
+ const now=Date.now();
+
+ if(now-lastProximityAlert>8000){
+  speak(
+   "Visual alert. "+names.join(", ")+
+   " appear large in the camera image.",
+   "proximity",
+   8000
+  );
+
+  lastProximityAlert=now;
+ }
+}
+
+// Display detections
+function displayObjects(items){
+
+ countBox.innerHTML="<b>"+items.length+
+  "</b> objects detected";
+
+ objectsBox.innerHTML="";
+
+ if(items.length===0){
+  objectsBox.textContent="No objects detected.";
+  return;
+ }
+
+ items.forEach(item=>{
+
+  const tag=document.createElement("span");
+
+  tag.className="tag";
+
+  tag.textContent=
+   item.name+" · "+
+   Math.round(item.confidence*100)+"%";
+
+  objectsBox.appendChild(tag);
+ });
+}
+
+// Send camera frame to laptop
+async function sendFrame(){
+
+ if(!stream || busy || video.readyState<2) return;
+
+ busy=true;
+
+ try{
+
+  const canvas=document.createElement("canvas");
+
+  const scale=Math.min(1,640/video.videoWidth);
+
+  canvas.width=Math.round(video.videoWidth*scale);
+  canvas.height=Math.round(video.videoHeight*scale);
+
+  canvas.getContext("2d").drawImage(
+   video,0,0,canvas.width,canvas.height
+  );
+
+  const image=canvas.toDataURL("image/jpeg",0.72);
+
+  const response=await fetch("/api/detect",{
+   method:"POST",
+   headers:{"Content-Type":"application/json"},
+   body:JSON.stringify({image})
+  });
+
+  const data=await response.json();
+
+  if(!response.ok || !data.ok){
+   throw new Error(data.error || "Detection failed");
+  }
+
+  const items=data.objects || [];
+
+  displayObjects(items);
+  detectMotion(items);
+  detectVisualProximity(items);
+  searchObject(items);
+
+  statusBox.textContent="AI detection running.";
+
+ }catch(error){
+
+  statusBox.textContent=
+   "Camera / AI error: "+error.message;
+
+ }finally{
+  busy=false;
+ }
+}
+
+// Start camera
+document.getElementById("start").onclick=async()=>{
+
+ try{
+
+  if(!window.isSecureContext &&
+     location.hostname!=="localhost" &&
+     location.hostname!=="127.0.0.1"){
+
+   throw new Error("Please open the HTTPS camera link.");
+  }
+
+  statusBox.textContent="Requesting camera permission...";
+
+  stream=await navigator.mediaDevices.getUserMedia({
+   video:{
+    facingMode:{ideal:"environment"},
+    width:{ideal:1280},
+    height:{ideal:720}
+   },
+   audio:false
+  });
+
+  video.srcObject=stream;
+  await video.play();
+
+  previousObjects=[];
+
+  statusBox.textContent="Camera connected. Loading AI...";
+
+  if(timer) clearInterval(timer);
+
+  timer=setInterval(sendFrame,1100);
+  sendFrame();
+
+ }catch(error){
+
+  statusBox.textContent="Camera error: "+error.message;
+ }
+};
+
+// Stop camera
+document.getElementById("stop").onclick=()=>{
+
+ if(timer) clearInterval(timer);
+
+ timer=null;
+
+ if(stream){
+  stream.getTracks().forEach(track=>track.stop());
+ }
+
+ stream=null;
+ video.srcObject=null;
+
+ if("speechSynthesis" in window){
+  window.speechSynthesis.cancel();
+ }
+
+ wantedObject=null;
+ previousObjects=[];
+
+ statusBox.textContent="Stopped.";
+ resultBox.textContent="Camera stopped.";
+ motionBox.textContent="Motion detection stopped.";
+ proximityBox.textContent="Visual alert stopped.";
+};
+
+// Voice ON/OFF
+document.getElementById("voiceToggle").onclick=()=>{
+
+ voiceOn=!voiceOn;
+
+ document.getElementById("voiceToggle").textContent=
+  "Voice: "+(voiceOn?"ON":"OFF");
+
+ if(!voiceOn && "speechSynthesis" in window){
+  window.speechSynthesis.cancel();
+ }
+};
+
+// Voice command input
+document.getElementById("listen").onclick=()=>{
+
+ const SpeechRecognition=
+  window.SpeechRecognition ||
+  window.webkitSpeechRecognition;
+
+ if(!SpeechRecognition){
+
+  resultBox.textContent=
+   "Voice recognition unavailable. Try Chrome on your phone.";
+
+  return;
+ }
+
+ if(!stream){
+
+  resultBox.textContent="Start camera first.";
+  return;
+ }
+
+ const recognition=new SpeechRecognition();
+
+ recognition.lang=document.getElementById("language").value;
+ recognition.continuous=false;
+ recognition.interimResults=false;
+
+ resultBox.textContent="Listening...";
+
+ recognition.onresult=(event)=>{
+
+  const transcript=event.results[0][0].transcript;
+  const target=identifyObject(transcript);
+
+  if(target){
+
+   wantedObject=target;
+
+   lastSpeech="";
+   lastSpeechTime=0;
+   lastMissingAlert=0;
+
+   resultBox.textContent=
+    "Searching camera for "+target+"...";
+
+   speak("Searching for "+target,"search",1000);
+
+  }else{
+
+   wantedObject=null;
+
+   resultBox.textContent=
+    "Heard: "+transcript+
+    ". Try bottle, chair, bag, phone or book.";
+  }
+ };
+
+ recognition.onerror=(event)=>{
+
+  resultBox.textContent=
+   "Voice input error: "+event.error+
+   ". Check microphone permission.";
+ };
+
+ recognition.start();
+};
+
+</script>
+</body>
+</html>
